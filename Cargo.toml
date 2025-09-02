@@ -1,0 +1,7 @@
+[workspace]
+members = ["reggy-api", "reggy-core"]
+
+resolver = "2"
+
+[workspace.dependencies]
+uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }
