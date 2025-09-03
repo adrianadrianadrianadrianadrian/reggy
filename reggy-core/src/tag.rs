@@ -22,4 +22,8 @@ impl Tag {
             )))
         }
     }
+
+    pub fn raw(&self) -> String {
+        self.0.clone()
+    }
 }

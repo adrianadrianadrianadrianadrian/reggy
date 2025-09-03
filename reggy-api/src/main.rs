@@ -1,10 +1,10 @@
 use axum::{
+    Router,
     body::Body,
     extract::{Path, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, head, patch, post, put},
-    Router,
 };
 use reggy_core::{manifest::pull_manifest, reference::Reference, repository_name::RepositoryName};
 use serde::Deserialize;
@@ -33,7 +33,7 @@ async fn main() {
             "/v2/{name}/manifests/{reference}",
             get(
                 async move |Path((name, reference)): Path<(String, String)>| {
-                    get_manifests(&name, &reference).await
+                    //get_manifests(&name, &reference).await
                 },
             )
             .head(head_manifests)

@@ -1,7 +1,7 @@
 [package]
 name = "reggy-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 path = "src/lib.rs"
@@ -12,3 +12,5 @@ lazy_static = "1.5.0"
 uuid = { workspace = true }
 log = "0.4"
 sha256 = "1.6.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

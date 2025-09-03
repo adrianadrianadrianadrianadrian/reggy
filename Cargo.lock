@@ -573,6 +573,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "reggy-core",
+ "reggy-fs",
  "serde",
  "tokio",
 ]
@@ -584,8 +585,17 @@ dependencies = [
  "lazy_static",
  "log",
  "regex",
+ "serde",
+ "serde_json",
  "sha256",
  "uuid",
+]
+
+[[package]]
+name = "reggy-fs"
+version = "0.1.0"
+dependencies = [
+ "reggy-core",
 ]
 
 [[package]]

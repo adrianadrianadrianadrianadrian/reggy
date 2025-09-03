@@ -2,8 +2,10 @@ use crate::{
     headers::Headers, reference::Reference, registry_error::RegistryError,
     repository_name::RepositoryName, Response,
 };
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 
+#[derive(Serialize, Deserialize)]
 pub struct Manifest {
     pub content_type: String,
     pub media_type: Option<String>,
@@ -16,7 +18,12 @@ pub trait ManifestStore {
         reference: &Reference,
     ) -> impl Future<Output = Result<Option<Manifest>, RegistryError>>;
 
-    fn write(&self, manifest: Manifest) -> impl Future<Output = Result<(), RegistryError>>;
+    fn write(
+        &self,
+        name: &RepositoryName,
+        reference: &Reference,
+        manifest: Manifest,
+    ) -> impl Future<Output = Result<(), RegistryError>>;
 }
 
 pub async fn pull_manifest(

@@ -2,13 +2,16 @@ use crate::{
     digest::Digest, headers::Headers, range::Range, registry_error::RegistryError,
     repository_name::RepositoryName, Response,
 };
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 
+#[derive(Serialize, Deserialize)]
 pub struct Blob {
     pub metadata: BlobMetadata,
     pub content: Vec<u8>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct BlobMetadata {
     pub digest: Digest,
     pub content_length: usize,
@@ -31,6 +34,7 @@ pub trait BlobStore {
         &self,
         name: &RepositoryName,
         content: &Vec<u8>,
+        session_id: &str,
     ) -> impl Future<Output = Result<(), RegistryError>>;
 
     fn read_chunk(
@@ -142,7 +146,7 @@ pub async fn upload_chunk(
         .unwrap_or(vec![]);
 
     content.extend_from_slice(&blob_content);
-    blob_store.write_chunk(name, &content).await?;
+    blob_store.write_chunk(name, &content, &session_id).await?;
     let mut headers = Headers::new(2);
     headers.insert_location(format!("/v2/{}/blobs/uploads/{}", name.raw(), session_id));
     headers.insert_range(0, content.len() - 1);
