@@ -53,8 +53,7 @@ mod tests {
 
     #[test]
     fn long_name_is_invalid() {
-        let long = r#"
-awonderfulserenityhastakenpossessionofmyentiresoullikethesesweetmorningsofpringwhichIenjoywithmywholeheartImaloneandfeelthecharmofexistenceinthisspotwhichwascreatedforheblissofsoulslikemineIamsohappymydearfriendsoabsorbedintheexquisithahdhfsdhfhasdfhasdhfsadhfhasdfhasdfhasdhfasdhfshadfhasdfhasdfhasdhfasdhfmyhaahfriend"#;
+        let long = "awonderfulserenityhastakenpossessionofmyentiresoullikethesesweetmorningsofpringwhichIenjoywithmywholeheartImaloneandfeelthecharmofexistenceinthisspotwhichwascreatedforheblissofsoulslikemineIamsohappymydearfriendsoabsorbedintheexquisithahdhfsdhfhasdfhasdhfsadhfhasdfhasdfhasdhfasdhfshadfhasdfhasdfhasdhfasdhfmyhaahfriend";
 
         let name = RepositoryName::new(long, "localhost", Some(8080));
         assert!(name.is_err());

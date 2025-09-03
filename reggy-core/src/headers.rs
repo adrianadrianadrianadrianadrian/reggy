@@ -4,8 +4,8 @@ use std::collections::HashMap;
 pub struct Headers(HashMap<String, String>);
 
 impl Headers {
-    pub fn new() -> Self {
-        Self(HashMap::new())
+    pub fn new(capacity: usize) -> Self {
+        Self(HashMap::with_capacity(capacity))
     }
 
     pub fn insert_docker_content_digest(&mut self, digest: &Digest) {
@@ -32,11 +32,9 @@ impl Headers {
             .insert("OCI-Chunk-Min-Length".to_string(), min.to_string());
     }
 
-    pub fn insert_range(&mut self, range: &Range) {
-        self.0.insert(
-            "Range".to_string(),
-            format!("{}-{}", range.start(), range.end()),
-        );
+    pub fn insert_range(&mut self, start: usize, end: usize) {
+        self.0
+            .insert("Range".to_string(), format!("{}-{}", start, end));
     }
 }
 

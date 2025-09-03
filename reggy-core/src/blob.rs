@@ -1,6 +1,6 @@
 use crate::{
     digest::Digest, headers::Headers, range::Range, registry_error::RegistryError,
-    repository_name::RepositoryName,
+    repository_name::RepositoryName, Response,
 };
 use std::future::Future;
 
@@ -27,20 +27,26 @@ pub trait BlobStore {
         blob: &Blob,
     ) -> impl Future<Output = Result<(), RegistryError>>;
 
-    fn read_metadata(
+    fn write_chunk(
         &self,
         name: &RepositoryName,
-        digest: &Digest,
-    ) -> impl Future<Output = Result<Option<BlobMetadata>, RegistryError>>;
+        content: &Vec<u8>,
+    ) -> impl Future<Output = Result<(), RegistryError>>;
+
+    fn read_chunk(
+        &self,
+        name: &RepositoryName,
+        session_id: &str,
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, RegistryError>>;
 }
 
 pub async fn read_blob_content(
     name: RepositoryName,
     digest: Digest,
     blob_store: &impl BlobStore,
-) -> Result<Option<(Vec<u8>, Headers)>, RegistryError> {
+) -> Result<Option<Response<Vec<u8>>>, RegistryError> {
     if let Some(blob) = blob_store.read(&name, &digest).await?.map(|b| b.content) {
-        let mut headers = Headers::new();
+        let mut headers = Headers::new(1);
         headers.insert_docker_content_digest(&digest);
         return Ok(Some((blob, headers)));
     }
@@ -60,22 +66,22 @@ pub async fn blob_exists(
     name: RepositoryName,
     digest: Digest,
     blob_store: &impl BlobStore,
-) -> Result<(bool, Option<Headers>), RegistryError> {
-    if let Some(metadata) = blob_store.read_metadata(&name, &digest).await? {
-        let mut headers = Headers::new();
+) -> Result<Response<bool>, RegistryError> {
+    let mut headers = Headers::new(2);
+    if let Some(Blob { metadata, .. }) = blob_store.read(&name, &digest).await? {
         headers.insert_docker_content_digest(&metadata.digest);
         headers.insert_content_length(metadata.content_length);
-        return Ok((true, Some(headers)));
+        return Ok((true, headers));
     }
 
-    return Ok((false, None));
+    return Ok((false, headers));
 }
 
 pub async fn monolithic_upload(
     name: &RepositoryName,
     digest: Digest,
     blob_length: usize,
-    blob_content: &[u8],
+    blob_content: Vec<u8>,
     blob_store: &impl BlobStore,
 ) -> Result<Headers, RegistryError> {
     let content = blob_content.to_vec();
@@ -87,16 +93,22 @@ pub async fn monolithic_upload(
         )));
     }
 
+    if !digest.validate(&blob_content) {
+        return Err(RegistryError::BlobUploadInvalid(format!(
+            "Blob digest mismatch."
+        )));
+    }
+
     let blob = Blob {
         metadata: BlobMetadata {
             digest,
             content_length: blob_length,
         },
-        content: blob_content.to_vec(),
+        content: blob_content,
     };
 
     blob_store.write(&name, &blob).await?;
-    let mut headers = Headers::new();
+    let mut headers = Headers::new(1);
     headers.insert_location(format!(
         "/v2/{}/blobs/{}",
         name.raw(),
@@ -105,22 +117,69 @@ pub async fn monolithic_upload(
     Ok(headers)
 }
 
-pub async fn get_unqiue_upload_location(name: &RepositoryName) -> Headers {
+pub async fn get_unqiue_upload_location(name: &RepositoryName, chunked_upload: bool) -> Headers {
     let session_id = uuid::Uuid::new_v4().to_string();
-    let mut headers = Headers::new();
-    headers.insert_location(format!("/v2/{}/blobs/upload/{}", name.raw(), session_id));
+    let mut headers = Headers::new(3);
+    headers.insert_location(format!("/v2/{}/blobs/uploads/{}", name.raw(), session_id));
     headers.insert_docker_upload_uuid(&session_id);
-    headers.insert_content_length(0);
+    if chunked_upload {
+        headers.insert_content_length(0);
+    }
     headers
 }
 
 pub async fn upload_chunk(
     name: &RepositoryName,
     session_id: String,
-    content_range: Range,
-    blob_length: usize,
-    blob_content: &[u8],
+    // TODO: check start is end of current content
+    _content_range: Range,
+    blob_content: Vec<u8>,
     blob_store: &impl BlobStore,
 ) -> Result<Headers, RegistryError> {
-    todo!()
+    let mut content = blob_store
+        .read_chunk(name, &session_id)
+        .await?
+        .unwrap_or(vec![]);
+
+    content.extend_from_slice(&blob_content);
+    blob_store.write_chunk(name, &content).await?;
+    let mut headers = Headers::new(2);
+    headers.insert_location(format!("/v2/{}/blobs/uploads/{}", name.raw(), session_id));
+    headers.insert_range(0, content.len() - 1);
+    Ok(headers)
+}
+
+pub async fn close_chunked_session(
+    name: &RepositoryName,
+    digest: Digest,
+    session_id: String,
+    blob_content: Option<Vec<u8>>,
+    blob_store: &impl BlobStore,
+) -> Result<Headers, RegistryError> {
+    // Q: What happens if we try close a session but the chunks thus far are empty?
+    // Going to just unwrap to [] for now.
+    let mut content = blob_store
+        .read_chunk(name, &session_id)
+        .await?
+        .unwrap_or(vec![]);
+    if let Some(final_layer) = blob_content {
+        content.extend_from_slice(&final_layer);
+    }
+
+    if !digest.validate(&content) {
+        // TODO: ?
+    }
+
+    let final_blob = &Blob {
+        metadata: BlobMetadata {
+            digest: digest.clone(),
+            content_length: content.len(),
+        },
+        content,
+    };
+
+    blob_store.write(name, &final_blob).await?;
+    let mut headers = Headers::new(1);
+    headers.insert_location(format!("/v2/{}/blobs/{}", name.raw(), digest.hex()));
+    Ok(headers)
 }

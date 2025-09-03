@@ -2,10 +2,11 @@ use axum::{
     body::Body,
     extract::{Path, Query},
     http::StatusCode,
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{delete, get, head, patch, post, put},
     Router,
 };
+use reggy_core::{manifest::pull_manifest, reference::Reference, repository_name::RepositoryName};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
@@ -23,27 +24,21 @@ async fn main() {
         .route(
             "/v2/{name}/blobs/{digest}",
             get(async move |Path((name, digest)): Path<(String, String)>| {
-                match get_blob(&name, &digest).await {
-                    Some(b) => Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Docker-Content-Digest", digest)
-                        .body(Body::from(b))
-                        .unwrap(),
-                    None => Response::builder()
-                        .status(StatusCode::NOT_FOUND)
-                        .body(Body::empty())
-                        .unwrap(),
-                }
+                get_blob(&name, &digest).await;
             })
             .head(head_blobs)
             .delete(blob_delete),
         )
         .route(
             "/v2/{name}/manifests/{reference}",
-            get(get_manifests)
-                .head(head_manifests)
-                .put(manifest_put)
-                .delete(manifest_delete),
+            get(
+                async move |Path((name, reference)): Path<(String, String)>| {
+                    get_manifests(&name, &reference).await
+                },
+            )
+            .head(head_manifests)
+            .put(manifest_put)
+            .delete(manifest_delete),
         )
         .route(
             "/v2/{name}/blobs/uploads/",
@@ -65,11 +60,18 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_blob(repository_name: &str, digest: &str) -> Option<Vec<u8>> {
-    None
-}
+async fn get_blob(repository_name: &str, digest: &str) {}
 async fn head_blobs() {}
-async fn get_manifests() {}
+async fn get_manifests(repository_name: &str, reference: &str) -> impl IntoResponse {
+    let name = RepositoryName::new(repository_name, "", None);
+    let reference = Reference::new(reference);
+    //let manifest = pull_manifest(name, reference, vec![], todo!()).await;
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(Body::empty())
+        .unwrap();
+}
 async fn head_manifests() {}
 async fn blob_upload() {}
 async fn blob_upload_patch() {}

@@ -1,6 +1,6 @@
 use crate::{
     headers::Headers, reference::Reference, registry_error::RegistryError,
-    repository_name::RepositoryName,
+    repository_name::RepositoryName, Response,
 };
 use std::future::Future;
 
@@ -16,28 +16,22 @@ pub trait ManifestStore {
         reference: &Reference,
     ) -> impl Future<Output = Result<Option<Manifest>, RegistryError>>;
 
-    fn exists(
-        &self,
-        name: &RepositoryName,
-        reference: &Reference,
-    ) -> impl Future<Output = Result<bool, RegistryError>>;
-
     fn write(&self, manifest: Manifest) -> impl Future<Output = Result<(), RegistryError>>;
 }
 
-pub async fn read_manifest(
+pub async fn pull_manifest(
     name: RepositoryName,
     reference: Reference,
     supported_content_types: Vec<String>,
     manifest_store: &impl ManifestStore,
-) -> Result<Option<(Manifest, Headers)>, RegistryError> {
+) -> Result<Option<Response<Manifest>>, RegistryError> {
     if let Some(manifest) = manifest_store.read(&name, &reference).await? {
         if !supported_content_types.contains(&manifest.content_type) {
             log::debug!("Manifest for repository: {name:?} and reference: {reference:?} is not supported by the client.");
             return Err(RegistryError::Unsupported);
         }
 
-        let mut headers = Headers::new();
+        let mut headers = Headers::new(1);
         if let Reference::Digest(digest) = reference {
             headers.insert_docker_content_digest(&digest);
         }

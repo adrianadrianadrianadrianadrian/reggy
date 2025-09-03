@@ -8,6 +8,7 @@ lazy_static! {
     static ref range_regex: Regex = Regex::new(RANGE_REGEX).unwrap();
 }
 
+#[derive(Clone, Debug)]
 pub struct Range {
     start: usize,
     end: usize,

@@ -1,5 +1,6 @@
 use lazy_static::lazy_static;
 use regex::Regex;
+use sha256::Sha256Digest;
 
 const HASH_ALGORITHM_REGEX: &str = "[A-Fa-f0-9_+.-]+";
 const HEX_REGEX: &str = "[A-Fa-f0-9]+";
@@ -9,7 +10,7 @@ lazy_static! {
     static ref hash_algorithm_regex: Regex = Regex::new(HASH_ALGORITHM_REGEX).unwrap();
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Hex(String);
 
 impl Hex {
@@ -29,7 +30,7 @@ impl Hex {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum HashAlgorithm {
     SHA256,
 }
@@ -57,7 +58,7 @@ impl HashAlgorithm {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Digest {
     algorithm: HashAlgorithm,
     hex: Hex,
@@ -82,5 +83,11 @@ impl Digest {
 
     pub fn hex(&self) -> String {
         self.hex.0.clone()
+    }
+
+    pub fn validate(&self, content: &Vec<u8>) -> bool {
+        match self.algorithm {
+            HashAlgorithm::SHA256 => content.digest() == self.hex(),
+        }
     }
 }
