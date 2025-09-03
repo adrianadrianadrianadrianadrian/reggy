@@ -44,11 +44,11 @@ pub async fn read_blob_content(
     name: RepositoryName,
     digest: Digest,
     blob_store: &impl BlobStore,
-) -> Result<Option<Response<Vec<u8>>>, RegistryError> {
+) -> Result<Response<Vec<u8>>, RegistryError> {
     if let Some(blob) = blob_store.read(&name, &digest).await?.map(|b| b.content) {
         let mut headers = Headers::new(1);
         headers.insert_docker_content_digest(&digest);
-        return Ok(Some((blob, headers)));
+        return Ok((blob, headers));
     }
 
     Err(RegistryError::BlobUnknown)
