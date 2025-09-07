@@ -8,7 +8,15 @@ pub enum Reference {
 
 impl Reference {
     pub fn new(reference: &str) -> Result<Self, RegistryError> {
-        todo!()
+        if let Ok(digest) = Digest::new(reference) {
+            return Ok(Reference::Digest(digest));
+        }
+        
+        if let Ok(tag) = Tag::new(reference) {
+            return Ok(Reference::Tag(tag));
+        }
+        
+        Err(RegistryError::ReferenceInvalid("A reference must be either a digest or tag.".to_string()))
     }
 
     pub fn into_string(&self) -> String {
