@@ -1,6 +1,6 @@
 use crate::{
-    headers::Headers, reference::Reference, registry_error::RegistryError,
-    repository_name::RepositoryName, Response,
+    Response, headers::Headers, reference::Reference, registry_error::RegistryError,
+    repository_name::RepositoryName,
 };
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -9,6 +9,7 @@ use std::future::Future;
 pub struct Manifest {
     pub content_type: String,
     pub media_type: Option<String>,
+    pub content: Vec<u8>,
 }
 
 pub trait ManifestStore {
@@ -34,7 +35,9 @@ pub async fn pull_manifest(
 ) -> Result<Option<Response<Manifest>>, RegistryError> {
     if let Some(manifest) = manifest_store.read(&name, &reference).await? {
         if !supported_content_types.contains(&manifest.content_type) {
-            log::debug!("Manifest for repository: {name:?} and reference: {reference:?} is not supported by the client.");
+            log::debug!(
+                "Manifest for repository: {name:?} and reference: {reference:?} is not supported by the client."
+            );
             return Err(RegistryError::Unsupported);
         }
 

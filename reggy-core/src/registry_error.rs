@@ -16,7 +16,7 @@ pub enum RegistryError {
     Denied,
     Unsupported,
     ReferenceInvalid(String),
-    Generic(String)
+    Generic(String),
 }
 
 impl RegistryError {
@@ -37,8 +37,8 @@ impl RegistryError {
             RegistryError::Unauthorised => "UNAUTHORIZED",
             RegistryError::Denied => "DENIED",
             RegistryError::Unsupported => "UNSUPPORTED",
-            RegistryError::ReferenceInvalid(_) => "",
-            RegistryError::Generic(_) => ""
+            RegistryError::ReferenceInvalid(e) => e,
+            RegistryError::Generic(e) => e,
         }
         .to_string()
     }

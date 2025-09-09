@@ -1,6 +1,6 @@
 use crate::{
-    digest::Digest, headers::Headers, range::Range, registry_error::RegistryError,
-    repository_name::RepositoryName, Response,
+    Response, digest::Digest, headers::Headers, registry_error::RegistryError,
+    repository_name::RepositoryName,
 };
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -45,8 +45,8 @@ pub trait BlobStore {
 }
 
 pub async fn read_blob_content(
-    name: RepositoryName,
-    digest: Digest,
+    name: &RepositoryName,
+    digest: &Digest,
     blob_store: &impl BlobStore,
 ) -> Result<Response<Vec<u8>>, RegistryError> {
     if let Some(blob) = blob_store.read(&name, &digest).await?.map(|b| b.content) {
@@ -121,7 +121,7 @@ pub async fn monolithic_upload(
     Ok(headers)
 }
 
-pub async fn get_unqiue_upload_location(name: &RepositoryName, chunked_upload: bool) -> Headers {
+pub fn get_unqiue_upload_location(name: &RepositoryName, chunked_upload: bool) -> Headers {
     let session_id = uuid::Uuid::new_v4().to_string();
     let mut headers = Headers::new(3);
     headers.insert_location(format!("/v2/{}/blobs/uploads/{}", name.raw(), session_id));
@@ -136,7 +136,7 @@ pub async fn upload_chunk(
     name: &RepositoryName,
     session_id: String,
     // TODO: check start is end of current content
-    _content_range: Range,
+    //_content_range: Range,
     blob_content: Vec<u8>,
     blob_store: &impl BlobStore,
 ) -> Result<Headers, RegistryError> {
@@ -149,7 +149,9 @@ pub async fn upload_chunk(
     blob_store.write_chunk(name, &content, &session_id).await?;
     let mut headers = Headers::new(2);
     headers.insert_location(format!("/v2/{}/blobs/uploads/{}", name.raw(), session_id));
-    headers.insert_range(0, content.len() - 1);
+    if content.len() > 0 {
+        headers.insert_range(0, content.len() - 1);
+    }
     Ok(headers)
 }
 

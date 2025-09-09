@@ -13,6 +13,7 @@ pub trait PointReadPersistence {
     fn write(&self, id: String, data: &Vec<u8>) -> impl Future<Output = Result<(), String>>;
 }
 
+#[derive(Clone)]
 pub struct PointReadStore<P: PointReadPersistence> {
     persistence: P,
 }
@@ -120,4 +121,3 @@ fn blob_id(name: &RepositoryName, digest: &Digest) -> String {
 fn blob_chunk_id(name: &RepositoryName, session_id: &str) -> String {
     format!("{}/blob_chunk/{}", name.raw(), session_id)
 }
-

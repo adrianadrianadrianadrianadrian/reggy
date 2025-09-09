@@ -1,60 +1,54 @@
-use std::sync::Arc;
-
 use axum::{
     Router,
-    body::Body,
-    extract::{Path, Query, State},
-    http::{HeaderName, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    body::{Body, to_bytes},
+    extract::{Path, Query, Request, State},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    response::IntoResponse,
     routing::{delete, get, head, patch, post, put},
 };
 use reggy_core::{
+    blob::{close_chunked_session, get_unqiue_upload_location, read_blob_content, upload_chunk},
     headers::Headers,
-    manifest::{Manifest, ManifestStore, pull_manifest},
-    point_read_store::PointReadStore,
+    manifest::pull_manifest,
+    point_read_store::{PointReadPersistence, PointReadStore},
     reference::Reference,
     registry_error::RegistryError,
     repository_name::RepositoryName,
 };
 use reggy_fs::FsPersistence;
 use serde::Deserialize;
+use std::sync::Arc;
 
 #[derive(Deserialize, Debug)]
 struct BlobUploadQuery {
     pub digest: Option<String>,
-    pub mount: Option<String>,
-    pub from: Option<String>,
 }
 
 #[derive(Clone)]
-struct AppState<M: ManifestStore> {
+struct AppState<P: PointReadPersistence> {
     hostname: String,
     port: u16,
-    manifest_store: M,
+    store: PointReadStore<P>,
 }
 
-// this is just temp for now
+// this is all just temp for now
 #[tokio::main]
 async fn main() {
     let fs = FsPersistence {
-        root_dir: "./registry".to_string(),
+        root_dir: "/home/adrian/code/reggy/registry".to_string(),
     };
     let store = PointReadStore::new(fs);
     let state = std::sync::Arc::new(AppState {
         hostname: "localhost".to_string(),
         port: 3000,
-        manifest_store: store,
+        store: store,
     });
 
     let app = Router::new()
         .route("/v2", get(async || StatusCode::OK))
         .route(
             "/v2/{name}/blobs/{digest}",
-            get(async move |Path((name, digest)): Path<(String, String)>| {
-                get_blob(&name, &digest).await;
-            })
-            .head(head_blobs)
-            .delete(blob_delete),
+            get(get_blob).head(head_blobs).delete(blob_delete),
         )
         .route(
             "/v2/{name}/manifests/{reference}",
@@ -63,17 +57,12 @@ async fn main() {
                 .put(manifest_put)
                 .delete(manifest_delete),
         )
-        .route(
-            "/v2/{name}/blobs/uploads/",
-            post(async |Query(query): Query<BlobUploadQuery>| {
-                println!("{:?}", query);
-                mount_blob().await
-            }),
-        )
+        .route("/v2/{name}/blobs/uploads/", post(start_blob_upload_session))
         .route(
             "/v2/{name}/blobs/uploads/{reference}",
             patch(blob_upload_patch)
                 .put(finalise_blob_upload)
+                .post(blob_upload)
                 .get(download_blob),
         )
         .route("/v2/{name}/tags/list", get(get_tags)) // ?n={integer}&last={tagname}
@@ -83,36 +72,157 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", state.hostname, state.port))
         .await
         .unwrap();
+
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_blob(repository_name: &str, digest: &str) {}
-async fn head_blobs() {}
+async fn start_blob_upload_session<P: PointReadPersistence>(
+    path: Path<String>,
+    state: State<Arc<AppState<P>>>,
+) -> impl IntoResponse {
+    let name = RepositoryName::new(&path.0, &state.hostname, Some(state.port)).unwrap();
+    let internal_headers = get_unqiue_upload_location(&name, true);
+    let headers = create_headers(internal_headers).unwrap();
+    (StatusCode::ACCEPTED, headers)
+}
 
-async fn get_manifests<M: ManifestStore>(
-    state: State<Arc<AppState<M>>>,
+async fn get_blob() {
+    println!("get_blob");
+}
+
+async fn head_blobs<P: PointReadPersistence>(
+    state: State<Arc<AppState<P>>>,
     Path((name, reference)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let read_manifest = async || -> Result<_, RegistryError> {
+    let name = RepositoryName::new(&name, &state.hostname, Some(state.port)).unwrap();
+    if let Reference::Digest(digest) = Reference::new(&reference).unwrap() {
+        println!("{:?}", digest);
+        if let Ok((_, headers)) = read_blob_content(&name, &digest, &state.store).await {
+            return (StatusCode::OK, create_headers(headers).unwrap());
+        }
+    }
+
+    (StatusCode::NOT_FOUND, HeaderMap::new())
+}
+
+async fn get_manifests<P: PointReadPersistence>(
+    state: State<Arc<AppState<P>>>,
+    Path((name, reference)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let read_manifest = async || {
         let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
         let reference = Reference::new(&reference)?;
-        Ok(pull_manifest(name, reference, vec![], &state.manifest_store).await?)
+        Ok::<_, RegistryError>(pull_manifest(name, reference, vec![], &state.store).await?)
     };
 
     match read_manifest().await {
-        Ok(_) => StatusCode::OK,
-        Err(_) => todo!(),
+        Ok(Some((m, h))) => {
+            let headers = create_headers(h).unwrap();
+            Ok((headers, m.content))
+        }
+        Ok(None) => Err((StatusCode::NOT_FOUND, "Manifest not found".to_string())),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
     }
 }
 
-async fn head_manifests() {}
-async fn blob_upload() {}
-async fn blob_upload_patch() {}
-async fn finalise_blob_upload() {}
-async fn manifest_put() {}
-async fn get_tags() {}
-async fn manifest_delete() {}
-async fn blob_delete() {}
-async fn mount_blob() {}
-async fn get_referrers() {}
-async fn download_blob() {}
+async fn head_manifests() {
+    println!("head_manifests");
+}
+
+async fn blob_upload() {
+    println!("blob_upload");
+}
+
+async fn blob_upload_patch<P: PointReadPersistence>(
+    state: State<Arc<AppState<P>>>,
+    path: Path<(String, String)>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    let name = RepositoryName::new(&path.0.0, &state.hostname, Some(state.port)).unwrap();
+    let chunk = to_bytes(req.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    let internal_headers = upload_chunk(&name, path.0.1, chunk, &state.store)
+        .await
+        .unwrap();
+
+    let headers = create_headers(internal_headers).unwrap();
+    println!("blob_upload_patch");
+    (StatusCode::ACCEPTED, headers)
+}
+
+async fn finalise_blob_upload<P: PointReadPersistence>(
+    state: State<Arc<AppState<P>>>,
+    path: Path<(String, String)>,
+    Query(query): Query<BlobUploadQuery>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    let name = RepositoryName::new(&path.0.0, &state.hostname, Some(state.port)).unwrap();
+    let session_id = &path.0.1;
+    let reference = Reference::new(&query.digest.unwrap());
+    println!("finalise_blob_upload");
+    println!("{reference:?}");
+
+    if let Ok(Reference::Digest(digest)) = reference {
+        let last_chunk = to_bytes(req.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
+
+        let mut last = None;
+        if last_chunk.len() > 0 {
+            last = Some(last_chunk);
+        }
+
+        let internal_headers =
+            close_chunked_session(&name, digest, session_id.to_string(), last, &state.store)
+                .await
+                .unwrap();
+        let headers = create_headers(internal_headers).unwrap();
+
+        return (StatusCode::CREATED, headers);
+    }
+
+    (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new())
+}
+
+async fn manifest_put() -> impl IntoResponse {
+    println!("manifest_put");
+    StatusCode::CREATED
+}
+
+async fn get_tags() {
+    println!("get_tags");
+}
+
+async fn manifest_delete() {
+    println!("manifest_delete");
+}
+
+async fn blob_delete() {
+    println!("blob_delete");
+}
+
+async fn mount_blob() {
+    println!("mount_blob");
+}
+
+async fn get_referrers() {
+    println!("get_referrers");
+}
+
+async fn download_blob() {
+    println!("download_blob");
+}
+
+fn create_headers(headers: Headers) -> Result<HeaderMap, String> {
+    let mut output = HeaderMap::new();
+    for (k, v) in headers {
+        let name = HeaderName::try_from(k).map_err(|e| e.to_string())?;
+        let value = HeaderValue::try_from(v).map_err(|e| e.to_string())?;
+        output.insert(name, value);
+    }
+
+    Ok(output)
+}

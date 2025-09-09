@@ -1,4 +1,4 @@
-use crate::{digest::Digest, range::Range};
+use crate::digest::Digest;
 use std::collections::HashMap;
 
 pub struct Headers(HashMap<String, String>);

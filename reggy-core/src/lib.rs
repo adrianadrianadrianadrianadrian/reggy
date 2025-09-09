@@ -4,11 +4,11 @@ pub mod blob;
 pub mod digest;
 pub mod headers;
 pub mod manifest;
+pub mod point_read_store;
 pub mod range;
 pub mod reference;
 pub mod registry_error;
 pub mod repository_name;
 pub mod tag;
-pub mod point_read_store;
 
 pub type Response<T> = (T, Headers);
