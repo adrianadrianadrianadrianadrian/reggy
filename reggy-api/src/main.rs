@@ -9,7 +9,7 @@ use axum::{
 use reggy_core::{
     blob::{close_chunked_session, get_unqiue_upload_location, read_blob_content, upload_chunk},
     headers::Headers,
-    manifest::pull_manifest,
+    manifest::{pull_manifest, push_manifest, Manifest},
     reference::Reference,
     registry_error::RegistryError,
     repository_name::RepositoryName,
@@ -116,7 +116,7 @@ async fn get_manifests(
     match read_manifest().await {
         Ok(Some((m, h))) => {
             let headers = create_headers(h).unwrap();
-            Ok((headers, m.content))
+            Ok(headers)
         }
         Ok(None) => Err((StatusCode::NOT_FOUND, "Manifest not found".to_string())),
         Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
@@ -185,9 +185,23 @@ async fn finalise_blob_upload(
     (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new())
 }
 
-async fn manifest_put() -> impl IntoResponse {
+async fn manifest_put(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    let name = RepositoryName::new(&name, &state.hostname, Some(state.port)).unwrap();
+    let reference = Reference::new(&reference).unwrap();
+    println!("reference {:?}", reference);
+    let data = to_bytes(req.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    let manifest: Manifest = serde_json::from_slice(&data).unwrap();
     println!("manifest_put");
-    StatusCode::CREATED
+    let headers = push_manifest(&name, &reference, manifest, &state.store).await.unwrap();
+    let external_headers = create_headers(headers).unwrap();
+    (StatusCode::CREATED, external_headers)
 }
 
 async fn get_tags() {

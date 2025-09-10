@@ -585,6 +585,7 @@ dependencies = [
  "reggy-core",
  "reggy-fs",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

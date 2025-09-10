@@ -73,7 +73,7 @@ impl ManifestStore for FsStore {
         &self,
         name: &RepositoryName,
         reference: &Reference,
-        manifest: Manifest,
+        manifest: &Manifest,
     ) -> Result<(), RegistryError> {
         let data =
             serde_json::to_vec(&manifest).map_err(|e| RegistryError::Generic(e.to_string()))?;

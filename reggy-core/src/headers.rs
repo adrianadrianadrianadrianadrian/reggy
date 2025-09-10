@@ -10,7 +10,7 @@ impl Headers {
 
     pub fn insert_docker_content_digest(&mut self, digest: &Digest) {
         self.0
-            .insert("Docker-Content-Digest".to_string(), digest.hex());
+            .insert("Docker-Content-Digest".to_string(), digest.to_string());
     }
 
     pub fn insert_content_length(&mut self, length: usize) {

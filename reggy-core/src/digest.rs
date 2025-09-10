@@ -91,4 +91,10 @@ impl Digest {
             HashAlgorithm::SHA256 => content.digest() == self.hex(),
         }
     }
+
+    pub fn to_string(&self) -> String {
+        match self.algorithm {
+            HashAlgorithm::SHA256 => format!("sha256:{}", self.hex()),
+        }
+    }
 }
