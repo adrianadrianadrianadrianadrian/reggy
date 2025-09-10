@@ -606,6 +606,8 @@ name = "reggy-fs"
 version = "0.1.0"
 dependencies = [
  "reggy-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

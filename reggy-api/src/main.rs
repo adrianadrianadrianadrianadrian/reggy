@@ -10,12 +10,11 @@ use reggy_core::{
     blob::{close_chunked_session, get_unqiue_upload_location, read_blob_content, upload_chunk},
     headers::Headers,
     manifest::pull_manifest,
-    point_read_store::{PointReadPersistence, PointReadStore},
     reference::Reference,
     registry_error::RegistryError,
     repository_name::RepositoryName,
 };
-use reggy_fs::FsPersistence;
+use reggy_fs::FsStore;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -25,23 +24,22 @@ struct BlobUploadQuery {
 }
 
 #[derive(Clone)]
-struct AppState<P: PointReadPersistence> {
+struct AppState {
     hostname: String,
     port: u16,
-    store: PointReadStore<P>,
+    store: FsStore,
 }
 
 // this is all just temp for now
 #[tokio::main]
 async fn main() {
-    let fs = FsPersistence {
+    let fs = FsStore {
         root_dir: "/home/adrian/code/reggy/registry".to_string(),
     };
-    let store = PointReadStore::new(fs);
     let state = std::sync::Arc::new(AppState {
         hostname: "localhost".to_string(),
         port: 3000,
-        store: store,
+        store: fs,
     });
 
     let app = Router::new()
@@ -76,9 +74,9 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn start_blob_upload_session<P: PointReadPersistence>(
+async fn start_blob_upload_session(
     path: Path<String>,
-    state: State<Arc<AppState<P>>>,
+    state: State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let name = RepositoryName::new(&path.0, &state.hostname, Some(state.port)).unwrap();
     let internal_headers = get_unqiue_upload_location(&name, true);
@@ -90,8 +88,8 @@ async fn get_blob() {
     println!("get_blob");
 }
 
-async fn head_blobs<P: PointReadPersistence>(
-    state: State<Arc<AppState<P>>>,
+async fn head_blobs(
+    state: State<Arc<AppState>>,
     Path((name, reference)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let name = RepositoryName::new(&name, &state.hostname, Some(state.port)).unwrap();
@@ -105,8 +103,8 @@ async fn head_blobs<P: PointReadPersistence>(
     (StatusCode::NOT_FOUND, HeaderMap::new())
 }
 
-async fn get_manifests<P: PointReadPersistence>(
-    state: State<Arc<AppState<P>>>,
+async fn get_manifests(
+    state: State<Arc<AppState>>,
     Path((name, reference)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let read_manifest = async || {
@@ -133,8 +131,8 @@ async fn blob_upload() {
     println!("blob_upload");
 }
 
-async fn blob_upload_patch<P: PointReadPersistence>(
-    state: State<Arc<AppState<P>>>,
+async fn blob_upload_patch(
+    state: State<Arc<AppState>>,
     path: Path<(String, String)>,
     req: Request<Body>,
 ) -> impl IntoResponse {
@@ -152,8 +150,8 @@ async fn blob_upload_patch<P: PointReadPersistence>(
     (StatusCode::ACCEPTED, headers)
 }
 
-async fn finalise_blob_upload<P: PointReadPersistence>(
-    state: State<Arc<AppState<P>>>,
+async fn finalise_blob_upload(
+    state: State<Arc<AppState>>,
     path: Path<(String, String)>,
     Query(query): Query<BlobUploadQuery>,
     req: Request<Body>,

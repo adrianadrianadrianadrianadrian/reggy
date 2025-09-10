@@ -4,7 +4,6 @@ pub mod blob;
 pub mod digest;
 pub mod headers;
 pub mod manifest;
-pub mod point_read_store;
 pub mod range;
 pub mod reference;
 pub mod registry_error;
