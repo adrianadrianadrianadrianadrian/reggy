@@ -44,44 +44,50 @@ pub trait ManifestStore {
     ) -> impl Future<Output = Result<(), RegistryError>>;
 }
 
-// TODO
 pub async fn pull_manifest(
     name: RepositoryName,
     reference: Reference,
-    supported_content_types: Vec<String>,
     manifest_store: &impl ManifestStore,
 ) -> Result<Option<Response<Manifest>>, RegistryError> {
     if let Some(manifest) = manifest_store.read(&name, &reference).await? {
-        // if !supported_content_types.contains(&manifest.content_type) {
-        //     return Err(RegistryError::Unsupported);
-        // }
-
-        let mut headers = Headers::new(1);
-        if let Reference::Digest(digest) = reference {
-            headers.insert_docker_content_digest(&digest);
-        }
-
+        let digest = Digest::new(&manifest.config.digest).map_err(RegistryError::Generic)?;
+        let mut headers = Headers::new(2);
+        headers.insert_docker_content_digest(&digest);
+        headers.insert_content_type(&manifest.media_type);
         return Ok(Some((manifest, headers)));
     }
 
     return Ok(None);
 }
 
-// TODO
 pub async fn push_manifest(
     name: &RepositoryName,
     reference: &Reference,
     manifest: Manifest,
     manifest_store: &impl ManifestStore,
 ) -> Result<Headers, RegistryError> {
+    let digest = Digest::new(&manifest.config.digest).map_err(RegistryError::Generic)?;
+    if let Reference::Tag(_) = reference {
+        manifest_store
+            .write(name, &Reference::Digest(digest.clone()), &manifest)
+            .await?;
+    }
     manifest_store.write(name, reference, &manifest).await?;
+
     let mut headers = Headers::new(2);
     headers.insert_location(format!(
         "/v2/{}/manifests/{}",
         name.raw(),
         reference.into_string()
     ));
-    let digest = Digest::new(&manifest.config.digest).unwrap();
     headers.insert_docker_content_digest(&digest);
     Ok(headers)
+}
+
+pub async fn remove_manifest(
+    name: &RepositoryName,
+    reference: &Reference,
+    manifest_store: &impl ManifestStore,
+) -> Result<(), RegistryError> {
+    todo!()
 }

@@ -116,7 +116,7 @@ pub async fn monolithic_upload(
     headers.insert_location(format!(
         "/v2/{}/blobs/{}",
         name.raw(),
-        blob.metadata.digest.hex()
+        blob.metadata.digest.to_string()
     ));
     Ok(headers)
 }
@@ -186,6 +186,6 @@ pub async fn close_chunked_session(
 
     blob_store.write(name, &final_blob).await?;
     let mut headers = Headers::new(1);
-    headers.insert_location(format!("/v2/{}/blobs/{}", name.raw(), digest.hex()));
+    headers.insert_location(format!("/v2/{}/blobs/{}", name.raw(), digest.to_string()));
     Ok(headers)
 }

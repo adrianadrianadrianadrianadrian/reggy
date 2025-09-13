@@ -9,7 +9,7 @@ use axum::{
 use reggy_core::{
     blob::{close_chunked_session, get_unqiue_upload_location, read_blob_content, upload_chunk},
     headers::Headers,
-    manifest::{pull_manifest, push_manifest, Manifest},
+    manifest::{Manifest, pull_manifest, push_manifest, remove_manifest},
     reference::Reference,
     registry_error::RegistryError,
     repository_name::RepositoryName,
@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 #[derive(Deserialize, Debug)]
 struct BlobUploadQuery {
-    pub digest: Option<String>,
+    pub digest: String,
 }
 
 #[derive(Clone)]
@@ -52,8 +52,8 @@ async fn main() {
             "/v2/{name}/manifests/{reference}",
             get(get_manifests)
                 .head(head_manifests)
-                .put(manifest_put)
-                .delete(manifest_delete),
+                .put(put_manifest)
+                .delete(delete_manifest),
         )
         .route("/v2/{name}/blobs/uploads/", post(start_blob_upload_session))
         .route(
@@ -74,6 +74,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+// Blobs
 async fn start_blob_upload_session(
     path: Path<String>,
     state: State<Arc<AppState>>,
@@ -101,30 +102,6 @@ async fn head_blobs(
     }
 
     (StatusCode::NOT_FOUND, HeaderMap::new())
-}
-
-async fn get_manifests(
-    state: State<Arc<AppState>>,
-    Path((name, reference)): Path<(String, String)>,
-) -> impl IntoResponse {
-    let read_manifest = async || {
-        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
-        let reference = Reference::new(&reference)?;
-        Ok::<_, RegistryError>(pull_manifest(name, reference, vec![], &state.store).await?)
-    };
-
-    match read_manifest().await {
-        Ok(Some((m, h))) => {
-            let headers = create_headers(h).unwrap();
-            Ok(headers)
-        }
-        Ok(None) => Err((StatusCode::NOT_FOUND, "Manifest not found".to_string())),
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
-    }
-}
-
-async fn head_manifests() {
-    println!("head_manifests");
 }
 
 async fn blob_upload() {
@@ -156,60 +133,38 @@ async fn finalise_blob_upload(
     Query(query): Query<BlobUploadQuery>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    let name = RepositoryName::new(&path.0.0, &state.hostname, Some(state.port)).unwrap();
-    let session_id = &path.0.1;
-    let reference = Reference::new(&query.digest.unwrap());
     println!("finalise_blob_upload");
-    println!("{reference:?}");
+    let finalise = async || {
+        let name = RepositoryName::new(&path.0.0, &state.hostname, Some(state.port))?;
+        let session_id = &path.0.1;
+        let reference = Reference::new(&query.digest);
 
-    if let Ok(Reference::Digest(digest)) = reference {
-        let last_chunk = to_bytes(req.into_body(), usize::MAX)
-            .await
-            .unwrap()
-            .to_vec();
-
-        let mut last = None;
-        if last_chunk.len() > 0 {
-            last = Some(last_chunk);
-        }
-
-        let internal_headers =
-            close_chunked_session(&name, digest, session_id.to_string(), last, &state.store)
+        if let Ok(Reference::Digest(digest)) = reference {
+            let last_chunk = to_bytes(req.into_body(), usize::MAX)
                 .await
-                .unwrap();
-        let headers = create_headers(internal_headers).unwrap();
+                .map_err(|e| RegistryError::Generic(e.to_string()))?
+                .to_vec();
 
-        return (StatusCode::CREATED, headers);
-    }
+            let mut last = None;
+            if last_chunk.len() > 0 {
+                last = Some(last_chunk);
+            }
 
-    (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new())
-}
+            let internal_headers =
+                close_chunked_session(&name, digest, session_id.to_string(), last, &state.store)
+                    .await?;
+            return Ok::<_, RegistryError>(
+                create_headers(internal_headers).map_err(RegistryError::Generic)?,
+            );
+        };
 
-async fn manifest_put(
-    state: State<Arc<AppState>>,
-    Path((name, reference)): Path<(String, String)>,
-    req: Request<Body>,
-) -> impl IntoResponse {
-    let name = RepositoryName::new(&name, &state.hostname, Some(state.port)).unwrap();
-    let reference = Reference::new(&reference).unwrap();
-    println!("reference {:?}", reference);
-    let data = to_bytes(req.into_body(), usize::MAX)
-        .await
-        .unwrap()
-        .to_vec();
-    let manifest: Manifest = serde_json::from_slice(&data).unwrap();
-    println!("manifest_put");
-    let headers = push_manifest(&name, &reference, manifest, &state.store).await.unwrap();
-    let external_headers = create_headers(headers).unwrap();
-    (StatusCode::CREATED, external_headers)
-}
+        return Err(RegistryError::Generic("asdfasd".to_string()));
+    };
 
-async fn get_tags() {
-    println!("get_tags");
-}
-
-async fn manifest_delete() {
-    println!("manifest_delete");
+    match finalise().await {
+        Ok(headers) => (StatusCode::CREATED, headers),
+        Err(_) => todo!(),
+    };
 }
 
 async fn blob_delete() {
@@ -220,12 +175,101 @@ async fn mount_blob() {
     println!("mount_blob");
 }
 
-async fn get_referrers() {
-    println!("get_referrers");
-}
-
 async fn download_blob() {
     println!("download_blob");
+}
+
+// Manifest
+async fn get_manifests(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let get = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        let reference = Reference::new(&reference)?;
+        Ok::<_, RegistryError>(pull_manifest(name, reference, &state.store).await?)
+    };
+
+    match get().await {
+        Ok(Some((m, h))) => match create_headers(h) {
+            Ok(headers) => match serde_json::to_vec(&m) {
+                Ok(manifest) => Ok((headers, manifest)),
+                Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
+            },
+            Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
+        },
+        Ok(None) => Err((StatusCode::NOT_FOUND, "Manifest not found".to_string())),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
+}
+
+async fn head_manifests(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let head = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        let reference = Reference::new(&reference)?;
+        Ok::<_, RegistryError>(pull_manifest(name, reference, &state.store).await?)
+    };
+
+    match head().await {
+        Ok(Some((_, h))) => match create_headers(h) {
+            Ok(headers) => Ok(headers),
+            Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
+        },
+        Ok(None) => Err((StatusCode::NOT_FOUND, "No manifest found.".to_string())),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
+}
+
+async fn put_manifest(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    let put = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        let reference = Reference::new(&reference)?;
+        let data = to_bytes(req.into_body(), usize::MAX)
+            .await
+            .map_err(|e| RegistryError::Generic(e.to_string()))?
+            .to_vec();
+        let manifest: Manifest =
+            serde_json::from_slice(&data).map_err(|e| RegistryError::Generic(e.to_string()))?;
+        let headers = push_manifest(&name, &reference, manifest, &state.store).await?;
+        Ok::<_, RegistryError>(create_headers(headers).map_err(RegistryError::Generic)?)
+    };
+
+    match put().await {
+        Ok(headers) => Ok((StatusCode::CREATED, headers)),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
+}
+
+async fn delete_manifest(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let delete = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        let reference = Reference::new(&reference)?;
+        Ok::<_, RegistryError>(remove_manifest(&name, &reference, &state.store).await?)
+    };
+
+    match delete().await {
+        Ok(()) => Ok(StatusCode::ACCEPTED),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
+}
+
+// Tags
+async fn get_tags() {
+    println!("get_tags");
+}
+
+async fn get_referrers() {
+    println!("get_referrers");
 }
 
 fn create_headers(headers: Headers) -> Result<HeaderMap, String> {

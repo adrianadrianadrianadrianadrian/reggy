@@ -18,6 +18,11 @@ impl Headers {
             .insert("Content-Length".to_string(), length.to_string());
     }
 
+    pub fn insert_content_type(&mut self, ty: &str) {
+        self.0
+            .insert("Content-Type".to_string(), ty.to_string());
+    }
+
     pub fn insert_location(&mut self, location: String) {
         self.0.insert("Location".to_string(), location);
     }
