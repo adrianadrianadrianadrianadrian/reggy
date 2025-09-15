@@ -3,6 +3,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
 
+use crate::registry_error::RegistryError;
+
 const HASH_ALGORITHM_REGEX: &str = "[A-Fa-f0-9_+.-]+";
 const HEX_REGEX: &str = "[A-Fa-f0-9]+";
 
@@ -15,18 +17,20 @@ lazy_static! {
 pub struct Hex(String);
 
 impl Hex {
-    pub fn new(input: &str) -> Result<Self, String> {
+    pub fn new(input: &str) -> Result<Self, RegistryError> {
         if input.is_empty() {
-            return Err("A hex cannot be empty".to_string());
+            return Err(RegistryError::DigestInvalid(
+                "A hex cannot be empty".to_string(),
+            ));
         }
 
         if hex_regex.is_match(input) {
             Ok(Hex(input.to_string()))
         } else {
-            Err(format!(
+            Err(RegistryError::DigestInvalid(format!(
                 "A hex must match the following regular expression '{}'.",
                 HEX_REGEX
-            ))
+            )))
         }
     }
 }
@@ -37,24 +41,26 @@ pub enum HashAlgorithm {
 }
 
 impl HashAlgorithm {
-    pub fn new(input: &str) -> Result<Self, String> {
+    pub fn new(input: &str) -> Result<Self, RegistryError> {
         if input.is_empty() {
-            return Err("A hash algorithm cannot be empty".to_string());
+            return Err(RegistryError::DigestInvalid(
+                "A hash algorithm cannot be empty".to_string(),
+            ));
         }
 
         if hash_algorithm_regex.is_match(input) {
             match input {
                 "sha256" | "SHA256" => Ok(HashAlgorithm::SHA256),
-                _ => Err(format!(
+                _ => Err(RegistryError::DigestInvalid(format!(
                     "The hash algorithm '{}' is not currently supported.",
                     input
-                )),
+                ))),
             }
         } else {
-            Err(format!(
+            Err(RegistryError::DigestInvalid(format!(
                 "A hash algorithm must match the following regular expression '{}'.",
                 HASH_ALGORITHM_REGEX
-            ))
+            )))
         }
     }
 }
@@ -66,9 +72,11 @@ pub struct Digest {
 }
 
 impl Digest {
-    pub fn new(input: &str) -> Result<Self, String> {
+    pub fn new(input: &str) -> Result<Self, RegistryError> {
         if input.is_empty() {
-            return Err("A digest cannot be empty".to_string());
+            return Err(RegistryError::DigestInvalid(
+                "A digest cannot be empty".to_string(),
+            ));
         }
 
         match input.split(":").collect::<Vec<_>>().as_slice() {
@@ -76,9 +84,9 @@ impl Digest {
                 algorithm: HashAlgorithm::new(algorithm)?,
                 hex: Hex::new(hex)?,
             }),
-            _ => {
-                Err("A digest should be in the following format 'algorithm \":\" hex'".to_string())
-            }
+            _ => Err(RegistryError::DigestInvalid(
+                "A digest should be in the following format 'algorithm \":\" hex'".to_string(),
+            )),
         }
     }
 

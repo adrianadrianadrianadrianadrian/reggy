@@ -50,7 +50,7 @@ pub async fn pull_manifest(
     manifest_store: &impl ManifestStore,
 ) -> Result<Response<Manifest>, RegistryError> {
     if let Some(manifest) = manifest_store.read(&name, &reference).await? {
-        let digest = Digest::new(&manifest.config.digest).map_err(RegistryError::Generic)?;
+        let digest = Digest::new(&manifest.config.digest)?;
         let mut headers = Headers::new(2);
         headers.insert_docker_content_digest(&digest);
         headers.insert_content_type(&manifest.media_type);
@@ -66,7 +66,7 @@ pub async fn push_manifest(
     manifest: Manifest,
     manifest_store: &impl ManifestStore,
 ) -> Result<Headers, RegistryError> {
-    let digest = Digest::new(&manifest.config.digest).map_err(RegistryError::Generic)?;
+    let digest = Digest::new(&manifest.config.digest)?;
     if let Reference::Tag(_) = reference {
         manifest_store
             .write(name, &Reference::Digest(digest.clone()), &manifest)

@@ -11,6 +11,7 @@ use reggy_core::{
         close_chunked_session, get_unqiue_upload_location, read_blob_content, remove_blob,
         upload_chunk,
     },
+    digest::Digest,
     headers::Headers,
     manifest::{Manifest, pull_manifest, push_manifest, remove_manifest},
     reference::Reference,
@@ -77,37 +78,15 @@ async fn main() {
 }
 
 // Blobs
-async fn start_blob_upload_session(
-    path: Path<String>,
-    state: State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let get_upload_headers = || {
-        let name = RepositoryName::new(&path.0, &state.hostname, Some(state.port))?;
-        let internal_headers = get_unqiue_upload_location(&name, true);
-        let headers = create_headers(internal_headers)?;
-        Ok::<_, RegistryError>((StatusCode::ACCEPTED, headers))
-    };
-
-    match get_upload_headers() {
-        Ok(result) => Ok(result),
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
-    }
-}
-
 async fn get_blob(
     state: State<Arc<AppState>>,
-    Path((name, reference)): Path<(String, String)>,
+    Path((name, digest)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let blob = async || {
         let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
-        if let Reference::Digest(digest) = Reference::new(&reference)? {
-            let (blob, headers) = read_blob_content(&name, &digest, &state.store).await?;
-            return Ok::<_, RegistryError>((StatusCode::OK, create_headers(headers)?, blob));
-        } else {
-            return Err(RegistryError::Generic(
-                "Reference must be a digest to read a blob".to_string(),
-            ));
-        }
+        let digest = Digest::new(&digest)?;
+        let (blob, headers) = read_blob_content(&name, &digest, &state.store).await?;
+        return Ok::<_, RegistryError>((StatusCode::OK, create_headers(headers)?, blob));
     };
 
     match blob().await {
@@ -121,18 +100,13 @@ async fn get_blob(
 
 async fn head_blobs(
     state: State<Arc<AppState>>,
-    Path((name, reference)): Path<(String, String)>,
+    Path((name, digest)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let exists = async || {
         let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
-        if let Reference::Digest(digest) = Reference::new(&reference)? {
-            let (_, headers) = read_blob_content(&name, &digest, &state.store).await?;
-            return Ok::<_, RegistryError>((StatusCode::OK, create_headers(headers)?));
-        } else {
-            return Err(RegistryError::Generic(
-                "Reference must be a digest to read a blob".to_string(),
-            ));
-        }
+        let digest = Digest::new(&digest)?;
+        let (_, headers) = read_blob_content(&name, &digest, &state.store).await?;
+        return Ok::<_, RegistryError>((StatusCode::OK, create_headers(headers)?));
     };
 
     match exists().await {
@@ -140,6 +114,43 @@ async fn head_blobs(
         Err(RegistryError::BlobUnknown) => {
             Err((StatusCode::NOT_FOUND, "blob not found".to_string()))
         }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
+}
+
+async fn blob_delete(
+    state: State<Arc<AppState>>,
+    Path((name, digest)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let delete = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        let digest = Digest::new(&digest)?;
+        remove_blob(&name, &digest, &state.store).await?;
+        return Ok::<_, RegistryError>(StatusCode::ACCEPTED);
+    };
+
+    match delete().await {
+        Ok(result) => Ok(result),
+        Err(RegistryError::BlobUnknown) => {
+            Err((StatusCode::NOT_FOUND, "blob not found".to_string()))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
+}
+
+async fn start_blob_upload_session(
+    path: Path<String>,
+    state: State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let get_upload_headers = || {
+        let name = RepositoryName::new(&path.0, &state.hostname, Some(state.port))?;
+        let internal_headers = get_unqiue_upload_location(&name, true);
+        let headers = create_headers(internal_headers)?;
+        Ok::<_, RegistryError>((StatusCode::ACCEPTED, headers))
+    };
+
+    match get_upload_headers() {
+        Ok(result) => Ok(result),
         Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
     }
 }
@@ -208,31 +219,6 @@ async fn finalise_blob_upload(
 
     match finalise().await {
         Ok(result) => Ok(result),
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
-    }
-}
-
-async fn blob_delete(
-    state: State<Arc<AppState>>,
-    Path((name, reference)): Path<(String, String)>,
-) -> impl IntoResponse {
-    let delete = async || {
-        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
-        if let Reference::Digest(digest) = Reference::new(&reference)? {
-            remove_blob(&name, &digest, &state.store).await?;
-            return Ok::<_, RegistryError>(StatusCode::ACCEPTED);
-        } else {
-            return Err(RegistryError::Generic(
-                "Reference must be a digest to read a blob".to_string(),
-            ));
-        }
-    };
-
-    match delete().await {
-        Ok(result) => Ok(result),
-        Err(RegistryError::BlobUnknown) => {
-            Err((StatusCode::NOT_FOUND, "blob not found".to_string()))
-        }
         Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
     }
 }
