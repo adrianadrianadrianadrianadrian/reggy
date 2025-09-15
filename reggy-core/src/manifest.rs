@@ -48,16 +48,16 @@ pub async fn pull_manifest(
     name: RepositoryName,
     reference: Reference,
     manifest_store: &impl ManifestStore,
-) -> Result<Option<Response<Manifest>>, RegistryError> {
+) -> Result<Response<Manifest>, RegistryError> {
     if let Some(manifest) = manifest_store.read(&name, &reference).await? {
         let digest = Digest::new(&manifest.config.digest).map_err(RegistryError::Generic)?;
         let mut headers = Headers::new(2);
         headers.insert_docker_content_digest(&digest);
         headers.insert_content_type(&manifest.media_type);
-        return Ok(Some((manifest, headers)));
+        return Ok((manifest, headers));
+    } else {
+        return Err(RegistryError::ManifestUnknown);
     }
-
-    return Ok(None);
 }
 
 pub async fn push_manifest(

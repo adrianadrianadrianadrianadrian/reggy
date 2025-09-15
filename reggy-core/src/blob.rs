@@ -42,6 +42,12 @@ pub trait BlobStore {
         name: &RepositoryName,
         session_id: &str,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, RegistryError>>;
+
+    fn remove(
+        &self,
+        name: &RepositoryName,
+        digest: &Digest,
+    ) -> impl Future<Output = Result<(), RegistryError>>;
 }
 
 pub async fn read_blob_content(
@@ -188,4 +194,12 @@ pub async fn close_chunked_session(
     let mut headers = Headers::new(1);
     headers.insert_location(format!("/v2/{}/blobs/{}", name.raw(), digest.to_string()));
     Ok(headers)
+}
+
+pub async fn remove_blob(
+    name: &RepositoryName,
+    digest: &Digest,
+    blob_store: &impl BlobStore,
+) -> Result<(), RegistryError> {
+    blob_store.remove(name, digest).await
 }

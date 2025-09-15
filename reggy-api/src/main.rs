@@ -7,7 +7,10 @@ use axum::{
     routing::{delete, get, head, patch, post, put},
 };
 use reggy_core::{
-    blob::{close_chunked_session, get_unqiue_upload_location, read_blob_content, upload_chunk},
+    blob::{
+        close_chunked_session, get_unqiue_upload_location, read_blob_content, remove_blob,
+        upload_chunk,
+    },
     headers::Headers,
     manifest::{Manifest, pull_manifest, push_manifest, remove_manifest},
     reference::Reference,
@@ -30,7 +33,6 @@ struct AppState {
     store: FsStore,
 }
 
-// this is all just temp for now
 #[tokio::main]
 async fn main() {
     let fs = FsStore {
@@ -79,33 +81,72 @@ async fn start_blob_upload_session(
     path: Path<String>,
     state: State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let name = RepositoryName::new(&path.0, &state.hostname, Some(state.port)).unwrap();
-    let internal_headers = get_unqiue_upload_location(&name, true);
-    let headers = create_headers(internal_headers).unwrap();
-    (StatusCode::ACCEPTED, headers)
+    let get_upload_headers = || {
+        let name = RepositoryName::new(&path.0, &state.hostname, Some(state.port))?;
+        let internal_headers = get_unqiue_upload_location(&name, true);
+        let headers = create_headers(internal_headers)?;
+        Ok::<_, RegistryError>((StatusCode::ACCEPTED, headers))
+    };
+
+    match get_upload_headers() {
+        Ok(result) => Ok(result),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
-async fn get_blob() {
-    println!("get_blob");
+async fn get_blob(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let blob = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        if let Reference::Digest(digest) = Reference::new(&reference)? {
+            let (blob, headers) = read_blob_content(&name, &digest, &state.store).await?;
+            return Ok::<_, RegistryError>((StatusCode::OK, create_headers(headers)?, blob));
+        } else {
+            return Err(RegistryError::Generic(
+                "Reference must be a digest to read a blob".to_string(),
+            ));
+        }
+    };
+
+    match blob().await {
+        Ok(result) => Ok(result),
+        Err(RegistryError::BlobUnknown) => {
+            Err((StatusCode::NOT_FOUND, "blob not found".to_string()))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
 async fn head_blobs(
     state: State<Arc<AppState>>,
     Path((name, reference)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let name = RepositoryName::new(&name, &state.hostname, Some(state.port)).unwrap();
-    if let Reference::Digest(digest) = Reference::new(&reference).unwrap() {
-        println!("{:?}", digest);
-        if let Ok((_, headers)) = read_blob_content(&name, &digest, &state.store).await {
-            return (StatusCode::OK, create_headers(headers).unwrap());
+    let exists = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        if let Reference::Digest(digest) = Reference::new(&reference)? {
+            let (_, headers) = read_blob_content(&name, &digest, &state.store).await?;
+            return Ok::<_, RegistryError>((StatusCode::OK, create_headers(headers)?));
+        } else {
+            return Err(RegistryError::Generic(
+                "Reference must be a digest to read a blob".to_string(),
+            ));
         }
-    }
+    };
 
-    (StatusCode::NOT_FOUND, HeaderMap::new())
+    match exists().await {
+        Ok(result) => Ok(result),
+        Err(RegistryError::BlobUnknown) => {
+            Err((StatusCode::NOT_FOUND, "blob not found".to_string()))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
 async fn blob_upload() {
     println!("blob_upload");
+    todo!()
 }
 
 async fn blob_upload_patch(
@@ -113,18 +154,21 @@ async fn blob_upload_patch(
     path: Path<(String, String)>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    let name = RepositoryName::new(&path.0.0, &state.hostname, Some(state.port)).unwrap();
-    let chunk = to_bytes(req.into_body(), usize::MAX)
-        .await
-        .unwrap()
-        .to_vec();
-    let internal_headers = upload_chunk(&name, path.0.1, chunk, &state.store)
-        .await
-        .unwrap();
+    let headers = async || {
+        let name = RepositoryName::new(&path.0.0, &state.hostname, Some(state.port))?;
+        let chunk = to_bytes(req.into_body(), usize::MAX)
+            .await
+            .map_err(|e| RegistryError::Generic(e.to_string()))?
+            .to_vec();
+        let internal_headers = upload_chunk(&name, path.0.1, chunk, &state.store).await?;
+        let headers = create_headers(internal_headers)?;
+        Ok::<_, RegistryError>((StatusCode::ACCEPTED, headers))
+    };
 
-    let headers = create_headers(internal_headers).unwrap();
-    println!("blob_upload_patch");
-    (StatusCode::ACCEPTED, headers)
+    match headers().await {
+        Ok(result) => Ok(result),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
 async fn finalise_blob_upload(
@@ -153,30 +197,54 @@ async fn finalise_blob_upload(
             let internal_headers =
                 close_chunked_session(&name, digest, session_id.to_string(), last, &state.store)
                     .await?;
-            return Ok::<_, RegistryError>(
-                create_headers(internal_headers).map_err(RegistryError::Generic)?,
-            );
+            let headers = create_headers(internal_headers)?;
+            return Ok::<_, RegistryError>((StatusCode::CREATED, headers));
         };
 
-        return Err(RegistryError::Generic("asdfasd".to_string()));
+        return Err(RegistryError::Generic(
+            "Reference must be a digest upon final upload.".to_string(),
+        ));
     };
 
     match finalise().await {
-        Ok(headers) => (StatusCode::CREATED, headers),
-        Err(_) => todo!(),
-    };
+        Ok(result) => Ok(result),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
-async fn blob_delete() {
-    println!("blob_delete");
+async fn blob_delete(
+    state: State<Arc<AppState>>,
+    Path((name, reference)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let delete = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        if let Reference::Digest(digest) = Reference::new(&reference)? {
+            remove_blob(&name, &digest, &state.store).await?;
+            return Ok::<_, RegistryError>(StatusCode::ACCEPTED);
+        } else {
+            return Err(RegistryError::Generic(
+                "Reference must be a digest to read a blob".to_string(),
+            ));
+        }
+    };
+
+    match delete().await {
+        Ok(result) => Ok(result),
+        Err(RegistryError::BlobUnknown) => {
+            Err((StatusCode::NOT_FOUND, "blob not found".to_string()))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
 async fn mount_blob() {
     println!("mount_blob");
+    todo!()
 }
 
 async fn download_blob() {
     println!("download_blob");
+    todo!()
 }
 
 // Manifest
@@ -184,21 +252,20 @@ async fn get_manifests(
     state: State<Arc<AppState>>,
     Path((name, reference)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let get = async || {
+    let manifest = async || {
         let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
         let reference = Reference::new(&reference)?;
-        Ok::<_, RegistryError>(pull_manifest(name, reference, &state.store).await?)
+        let (m, internal_headers) = pull_manifest(name, reference, &state.store).await?;
+        let headers = create_headers(internal_headers)?;
+        let body = serde_json::to_vec(&m).map_err(|e| RegistryError::Generic(e.to_string()))?;
+        Ok::<_, RegistryError>((headers, body))
     };
 
-    match get().await {
-        Ok(Some((m, h))) => match create_headers(h) {
-            Ok(headers) => match serde_json::to_vec(&m) {
-                Ok(manifest) => Ok((headers, manifest)),
-                Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
-            },
-            Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
-        },
-        Ok(None) => Err((StatusCode::NOT_FOUND, "Manifest not found".to_string())),
+    match manifest().await {
+        Ok(result) => Ok(result),
+        Err(RegistryError::ManifestUnknown) => {
+            Err((StatusCode::NOT_FOUND, "Manifest not found".to_string()))
+        }
         Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
     }
 }
@@ -207,18 +274,18 @@ async fn head_manifests(
     state: State<Arc<AppState>>,
     Path((name, reference)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let head = async || {
+    let exists = async || {
         let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
         let reference = Reference::new(&reference)?;
-        Ok::<_, RegistryError>(pull_manifest(name, reference, &state.store).await?)
+        let (_, internal_headers) = pull_manifest(name, reference, &state.store).await?;
+        Ok::<_, RegistryError>(create_headers(internal_headers)?)
     };
 
-    match head().await {
-        Ok(Some((_, h))) => match create_headers(h) {
-            Ok(headers) => Ok(headers),
-            Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err)),
-        },
-        Ok(None) => Err((StatusCode::NOT_FOUND, "No manifest found.".to_string())),
+    match exists().await {
+        Ok(headers) => Ok(headers),
+        Err(RegistryError::ManifestUnknown) => {
+            Err((StatusCode::NOT_FOUND, "No manifest found.".to_string()))
+        }
         Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
     }
 }
@@ -238,7 +305,7 @@ async fn put_manifest(
         let manifest: Manifest =
             serde_json::from_slice(&data).map_err(|e| RegistryError::Generic(e.to_string()))?;
         let headers = push_manifest(&name, &reference, manifest, &state.store).await?;
-        Ok::<_, RegistryError>(create_headers(headers).map_err(RegistryError::Generic)?)
+        Ok::<_, RegistryError>(create_headers(headers)?)
     };
 
     match put().await {
@@ -272,11 +339,11 @@ async fn get_referrers() {
     println!("get_referrers");
 }
 
-fn create_headers(headers: Headers) -> Result<HeaderMap, String> {
+fn create_headers(headers: Headers) -> Result<HeaderMap, RegistryError> {
     let mut output = HeaderMap::new();
     for (k, v) in headers {
-        let name = HeaderName::try_from(k).map_err(|e| e.to_string())?;
-        let value = HeaderValue::try_from(v).map_err(|e| e.to_string())?;
+        let name = HeaderName::try_from(k).map_err(|e| RegistryError::Generic(e.to_string()))?;
+        let value = HeaderValue::try_from(v).map_err(|e| RegistryError::Generic(e.to_string()))?;
         output.insert(name, value);
     }
 

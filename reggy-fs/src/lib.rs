@@ -52,6 +52,12 @@ impl BlobStore for FsStore {
         let raw_path = path(&self.root_dir, &blob_chunk_id(name, session_id));
         read_file(Path::new(&raw_path)).map_err(RegistryError::Generic)
     }
+
+    async fn remove(&self, name: &RepositoryName, digest: &Digest) -> Result<(), RegistryError> {
+        let raw_path = path(&self.root_dir, &blob_id(name, &digest));
+        std::fs::remove_file(Path::new(&raw_path))
+            .map_err(|e| RegistryError::Generic(e.to_string()))
+    }
 }
 
 impl ManifestStore for FsStore {
