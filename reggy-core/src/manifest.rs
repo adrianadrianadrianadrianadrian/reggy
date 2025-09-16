@@ -1,6 +1,6 @@
 use crate::{
     Response, digest::Digest, headers::Headers, reference::Reference,
-    registry_error::RegistryError, repository_name::RepositoryName,
+    registry_error::RegistryError, repository_name::RepositoryName, tag::Tag,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future};
@@ -42,6 +42,11 @@ pub trait ManifestStore {
         reference: &Reference,
         manifest: &Manifest,
     ) -> impl Future<Output = Result<(), RegistryError>>;
+
+    fn read_tags(
+        &self,
+        name: &RepositoryName,
+    ) -> impl Future<Output = Result<Vec<Tag>, RegistryError>>;
 }
 
 pub async fn pull_manifest(
@@ -90,4 +95,13 @@ pub async fn remove_manifest(
     manifest_store: &impl ManifestStore,
 ) -> Result<(), RegistryError> {
     todo!()
+}
+
+pub async fn list_tags(
+    name: &RepositoryName,
+    manifest_store: &impl ManifestStore,
+) -> Result<Vec<Tag>, RegistryError> {
+    let mut tags = manifest_store.read_tags(name).await?;
+    tags.sort_by_key(|a| a.raw());
+    Ok(tags)
 }

@@ -13,7 +13,7 @@ use reggy_core::{
     },
     digest::Digest,
     headers::Headers,
-    manifest::{Manifest, pull_manifest, push_manifest, remove_manifest},
+    manifest::{Manifest, list_tags, pull_manifest, push_manifest, remove_manifest},
     reference::Reference,
     registry_error::RegistryError,
     repository_name::RepositoryName,
@@ -317,8 +317,23 @@ async fn delete_manifest(
 }
 
 // Tags
-async fn get_tags() {
-    println!("get_tags");
+// TODO: query params
+async fn get_tags(state: State<Arc<AppState>>, Path(name): Path<String>) -> impl IntoResponse {
+    let tags = async || {
+        let name = RepositoryName::new(&name, &state.hostname, Some(state.port))?;
+        let tags = list_tags(&name, &state.store)
+            .await?
+            .iter()
+            .map(|t| t.raw())
+            .collect::<Vec<_>>();
+        let bytes = serde_json::to_vec(&tags).map_err(|e| RegistryError::Generic(e.to_string()))?;
+        Ok::<_, RegistryError>(bytes)
+    };
+
+    match tags().await {
+        Ok(tags) => Ok(tags),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.as_string())),
+    }
 }
 
 async fn get_referrers() {

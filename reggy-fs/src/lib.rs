@@ -5,6 +5,7 @@ use reggy_core::{
     reference::Reference,
     registry_error::RegistryError,
     repository_name::RepositoryName,
+    tag::Tag,
 };
 use std::{fs, path::Path};
 
@@ -83,8 +84,41 @@ impl ManifestStore for FsStore {
     ) -> Result<(), RegistryError> {
         let data =
             serde_json::to_vec(&manifest).map_err(|e| RegistryError::Generic(e.to_string()))?;
-        let raw_path = path(&self.root_dir, &manifest_id(name, reference));
-        write_file(Path::new(&raw_path), &data).map_err(RegistryError::Generic)
+        let raw_manifest_path = path(&self.root_dir, &manifest_id(name, reference));
+        write_file(Path::new(&raw_manifest_path), &data).map_err(RegistryError::Generic)?;
+
+        if let Reference::Tag(t) = reference {
+            let raw_tag_path = path(&self.root_dir, &tags_id(name));
+            let raw_tags = read_file(Path::new(&raw_tag_path))
+                .map_err(|e| RegistryError::Generic(e.to_string()))?
+                .unwrap_or_default();
+            let mut current_tags: Vec<String> =
+                serde_json::from_slice(&raw_tags).unwrap_or_default();
+            let raw_tag = t.raw();
+            if !current_tags.contains(&raw_tag) {
+                current_tags.push(raw_tag);
+                let updated = serde_json::to_vec(&current_tags)
+                    .map_err(|e| RegistryError::Generic(e.to_string()))?;
+                write_file(Path::new(&raw_tag_path), &updated)
+                    .map_err(|e| RegistryError::Generic(e.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn read_tags(&self, name: &RepositoryName) -> Result<Vec<Tag>, RegistryError> {
+        let raw_tag_path = path(&self.root_dir, &tags_id(name));
+        let raw_tags = read_file(Path::new(&raw_tag_path))
+            .map_err(|e| RegistryError::Generic(e.to_string()))?
+            .unwrap_or_default();
+        let mut output = vec![];
+        let data: Vec<String> =
+            serde_json::from_slice(&raw_tags).map_err(|e| RegistryError::Generic(e.to_string()))?;
+        for raw_tag in data {
+            output.push(Tag::new(&raw_tag)?);
+        }
+        Ok(output)
     }
 }
 
@@ -94,6 +128,10 @@ fn path(root_dir: &str, id: &str) -> String {
 
 fn manifest_id(name: &RepositoryName, reference: &Reference) -> String {
     format!("{}/manifest/{}", name.raw(), reference.into_string())
+}
+
+fn tags_id(name: &RepositoryName) -> String {
+    format!("{}/tags", name.raw())
 }
 
 fn blob_id(name: &RepositoryName, digest: &Digest) -> String {
